@@ -80,6 +80,67 @@ if (process.env.CORPUS_FILE) {
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
+// v3 additions (all optional, degrade gracefully if env unset):
+//   WEBAPP_URL + WEBAPP_TOKEN  -> per-call dynamic vocab (feature #1)
+//   GEMINI_API_KEY             -> shadow LLM arbiter on disagreements (feature #3)
+const WEBAPP_URL = process.env.WEBAPP_URL || '';
+const WEBAPP_TOKEN = process.env.WEBAPP_TOKEN || '';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+
+// Pull the caller's phone number out of Vapi's start message (shape varies;
+// try the known paths, log the keys so the real shape is captured on call 1).
+function extractCallerNumber(m) {
+  const paths = [
+    m && m.call && m.call.customer && m.call.customer.number,
+    m && m.customer && m.customer.number,
+    m && m.call && m.call.from,
+    m && m.from,
+    m && m.phoneNumber,
+  ];
+  for (const p of paths) if (p && String(p).replace(/\D/g, '').length >= 7) return String(p);
+  return '';
+}
+
+// Ask the webapp for caller-specific keyterms + vocab (feature #1).
+async function fetchCallerVocab(phone) {
+  if (!WEBAPP_URL || !WEBAPP_TOKEN || !phone) return { keyterms: [], vocab: [] };
+  try {
+    const u = WEBAPP_URL + '?token=' + encodeURIComponent(WEBAPP_TOKEN) +
+      '&action=vocab&from_phone=' + encodeURIComponent(phone);
+    const r = await fetch(u, { redirect: 'follow' });
+    const j = await r.json();
+    return { keyterms: Array.isArray(j.keyterms) ? j.keyterms : [],
+             vocab: Array.isArray(j.vocab) ? j.vocab : [] };
+  } catch (e) { console.error('vocab fetch failed:', e.message); return { keyterms: [], vocab: [] }; }
+}
+
+// Shadow LLM arbiter (feature #3): given the two ears' finals on a disputed
+// utterance, ask Gemini for the most likely intended text. LOG ONLY — the
+// live transcript Vapi receives is untouched. Promote later by piping the
+// verdict into the transcriber-response.
+async function geminiArbiter(dgText, smText, contextTerms) {
+  if (!GEMINI_API_KEY) return null;
+  try {
+    const prompt =
+      'Two speech recognizers disagree on one phone-call utterance from a limo booking. ' +
+      'Output ONLY the single most likely intended text (names/addresses/emails matter most). ' +
+      'Prefer a known term if one is phonetically close.\n' +
+      'Recognizer A: "' + dgText + '"\nRecognizer B: "' + smText + '"\n' +
+      'Known terms: ' + (contextTerms.slice(0, 40).join(', ') || '(none)') + '\nAnswer:';
+    const u = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + GEMINI_API_KEY;
+    const r = await fetch(u, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 40, temperature: 0 } }),
+    });
+    const j = await r.json();
+    const out = j && j.candidates && j.candidates[0] && j.candidates[0].content &&
+      j.candidates[0].content.parts && j.candidates[0].content.parts[0] &&
+      j.candidates[0].content.parts[0].text;
+    return out ? out.trim() : null;
+  } catch (e) { console.error('gemini arbiter failed:', e.message); return null; }
+}
+
 /* ---------- health endpoint (deploy platforms ping this) ---------- */
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -94,6 +155,8 @@ wss.on('connection', (vapi) => {
   let dg = null, sm = null;
   let dgQueue = [];           // audio buffered until Deepgram is open
   let lastFinal = { customer: '', assistant: '' };
+  let callKeyterms = KEYTERMS.slice();   // per-call: base + injected caller terms
+  let callCorpus = CORPUS.slice();       // per-call: base + injected caller vocab
 
   /* ---------- Deepgram Nova-3 leg (the production ears) ---------- */
   function openDeepgram() {
@@ -103,7 +166,7 @@ wss.on('connection', (vapi) => {
       multichannel: 'true', interim_results: 'true',
       smart_format: 'true', punctuate: 'true', endpointing: '300',
     });
-    for (const k of KEYTERMS) qs.append('keyterm', k);
+    for (const k of callKeyterms) qs.append('keyterm', k);
     dg = new WebSocket('wss://api.deepgram.com/v1/listen?' + qs.toString(),
       { headers: { Authorization: 'Token ' + DG_KEY } });
     dg.on('open', () => {
@@ -149,10 +212,10 @@ wss.on('connection', (vapi) => {
         audio_format: { type: 'raw', encoding: 'pcm_s16le', sample_rate: sampleRate },
         transcription_config: {
           language: 'en', enable_partials: false, max_delay: 2,
-          additional_vocab: CORPUS,
+          additional_vocab: callCorpus,
         },
       }));
-      log(`[${id}] speechmatics shadow open (${CORPUS.length}-name dictionary)`);
+      log(`[${id}] speechmatics shadow open (${callCorpus.length}-name dictionary)`);
     });
     sm.on('message', (raw) => {
       let m; try { m = JSON.parse(raw.toString()); } catch { return; }
@@ -164,7 +227,13 @@ wss.on('connection', (vapi) => {
       const norm = (s) => s.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(Boolean);
       const a = new Set(norm(lastFinal.customer)); const b = norm(text);
       const uniques = b.filter(w => w.length > 3 && !a.has(w));
-      if (uniques.length) log(`[${id}] *** DISAGREEMENT candidates: ${uniques.join(' ')} (SM heard these, DG final did not)`);
+      if (uniques.length) {
+        log(`[${id}] *** DISAGREEMENT candidates: ${uniques.join(' ')} (SM heard these, DG final did not)`);
+        // Shadow arbiter (feature #3) — log-only, never touches the live transcript.
+        geminiArbiter(lastFinal.customer, text, callKeyterms).then(v => {
+          if (v) log(`[${id}] *** ARBITER (shadow): "${v}"  [A:"${lastFinal.customer}" B:"${text}"]`);
+        });
+      }
     });
     sm.on('error', (e) => log(`[${id}] speechmatics error:`, e.message));
     sm.on('close', (c) => log(`[${id}] speechmatics closed (${c})`));
@@ -182,11 +251,27 @@ wss.on('connection', (vapi) => {
   vapi.on('message', (data, isBinary) => {
     if (!isBinary) {
       let m; try { m = JSON.parse(data.toString()); } catch { return; }
-      log(`[${id}] start message:`, JSON.stringify(m).slice(0, 200));
+      log(`[${id}] start message keys:`, Object.keys(m || {}).join(','));
       if (m.sampleRate) sampleRate = m.sampleRate;
       if (m.channels) channels = m.channels;
-      openDeepgram();
-      openSpeechmatics();
+      // Feature #1: per-call dynamic vocab. Fetch caller-specific terms, merge,
+      // THEN open the recognizer legs so the injected terms take effect.
+      const phone = extractCallerNumber(m);
+      if (phone) log(`[${id}] caller number detected for vocab injection`);
+      fetchCallerVocab(phone).then(v => {
+        if (v.keyterms.length) {
+          for (const k of v.keyterms) if (!callKeyterms.includes(k)) callKeyterms.push(k);
+          log(`[${id}] injected ${v.keyterms.length} per-call keyterms (total ${callKeyterms.length})`);
+        }
+        if (v.vocab.length) {
+          const have = new Set(callCorpus.map(c => (c.content || '').toLowerCase()));
+          for (const w of v.vocab) if (!have.has(String(w).toLowerCase())) callCorpus.push({ content: w });
+          log(`[${id}] injected ${v.vocab.length} per-call vocab entries (total ${callCorpus.length})`);
+        }
+      }).catch(() => {}).finally(() => {
+        openDeepgram();
+        openSpeechmatics();
+      });
       return;
     }
     // binary PCM
