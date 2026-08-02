@@ -127,7 +127,7 @@ async function geminiArbiter(dgText, smText, contextTerms) {
       'Prefer a known term if one is phonetically close.\n' +
       'Recognizer A: "' + dgText + '"\nRecognizer B: "' + smText + '"\n' +
       'Known terms: ' + (contextTerms.slice(0, 40).join(', ') || '(none)') + '\nAnswer:';
-    const u = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + GEMINI_API_KEY;
+    const u = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=' + GEMINI_API_KEY;
     const r = await fetch(u, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }],
