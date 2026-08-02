@@ -1,0 +1,9 @@
+{
+  "name": "ava-ears-gateway",
+  "version": "1.0.0",
+  "description": "Vapi custom-transcriber gateway: Nova-3 passthrough (stage 1) + Speechmatics shadow ears (stage 2)",
+  "main": "gateway.js",
+  "scripts": { "start": "node gateway.js" },
+  "engines": { "node": ">=18" },
+  "dependencies": { "ws": "^8.21.1" }
+}
