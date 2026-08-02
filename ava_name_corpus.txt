@@ -30,10 +30,10 @@ Vikram
 Vinod
 Aditya
 Ankit
-Apurva
+Apurva | ah poor vah; a purva
 Apoorva
-Sarabjit
-Kruti
+Sarabjit | sara b jeet; sarab jeet
+Kruti | kroo tee
 Priti
 Jaspreet
 Harpreet
@@ -124,8 +124,8 @@ Verma
 Malhotra
 Kapoor
 Chopra
-Saluja
-Chudgar
+Saluja | sah loo jah
+Chudgar | chud gar; chood gar
 Bhatt
 Trivedi
 Pandya
@@ -739,3 +739,213 @@ Jennings
 Watts
 Duran
 Barrera
+# --- travel pack v1 (Aug 2026): hotels, airlines, airports, NJ/NY geo, German geo, domains ---
+Marriott Marquis
+New York Marriott Marquis
+Marriott
+Hilton
+Hilton Midtown
+Waldorf Astoria
+St. Regis
+The Plaza Hotel
+Peninsula New York
+The Carlyle
+Lotte New York Palace
+Park Hyatt
+Grand Hyatt
+Hyatt
+Andaz
+Conrad
+Embassy Suites
+DoubleTree
+Courtyard by Marriott
+Residence Inn
+Fairfield Inn
+Hampton Inn
+Holiday Inn
+Crowne Plaza
+InterContinental
+Kimpton
+Sofitel
+Novotel
+Le Meridien | luh meridian
+Westin
+Sheraton
+W Hotel
+Ritz-Carlton | ritz carlton
+Four Seasons
+Mandarin Oriental
+Baccarat Hotel
+Moxy
+Pod Hotel
+citizenM | citizen m
+Hudson Hotel
+Knickerbocker
+Algonquin
+Iroquois
+Renaissance Hotel
+Aloft
+Element Hotel
+Sonesta
+Omni Berkshire
+Langham
+Lufthansa | looft hansa
+Air India
+United Airlines
+Delta Air Lines
+American Airlines
+JetBlue | jet blue
+Emirates
+Etihad | etty had
+Qatar Airways | cutter airways; kah tar airways
+Singapore Airlines
+British Airways
+Air France
+KLM
+Turkish Airlines
+Swiss International
+Austrian Airlines
+Condor
+Eurowings | euro wings
+Norse Atlantic
+TAP Air Portugal
+Iberia
+Aer Lingus | air lingus
+Virgin Atlantic
+Cathay Pacific | cathay pacific; katay pacific
+All Nippon Airways
+Japan Airlines
+Korean Air
+EVA Air | ay vee ay air
+LOT Polish Airlines
+Scandinavian Airlines
+Finnair | fin air
+Icelandair | iceland air
+Avianca | ah vee anka
+Copa Airlines
+Aeromexico | aero mexico
+Spirit Airlines
+Frontier Airlines
+Alaska Airlines
+Hawaiian Airlines
+Air Canada
+WestJet | west jet
+Newark Liberty International
+Kennedy Airport
+LaGuardia Airport
+Teterboro Airport
+Westchester County Airport
+Stewart International
+MacArthur Airport
+Philadelphia International
+Frankfurt Airport
+Frankfurt am Main
+Paramus
+Hackensack
+Ridgewood
+Fort Lee
+Edgewater
+Englewood
+Teaneck
+Fair Lawn
+Mahwah | mah wah
+Montvale
+Park Ridge
+Woodcliff Lake
+Saddle Brook
+Secaucus | see kaw kus
+Hoboken
+Weehawken | wee hawken
+Jersey City
+Elizabeth New Jersey
+Rahway | rah way
+Woodbridge
+Edison
+New Brunswick
+Princeton
+Morristown
+Parsippany | par sip anee
+Whippany | whip anee
+Basking Ridge
+Bridgewater
+Piscataway | piss cat away
+Manhattan
+Brooklyn
+Queens
+The Bronx
+Staten Island
+Yonkers
+White Plains
+Stamford
+Greenwich | gren itch
+Long Island City
+Astoria
+Flushing
+Jamaica Queens
+Broadway
+Madison Avenue
+Lexington Avenue
+Columbus Circle
+Times Square
+Rockefeller Center
+Javits Center | javitz center
+Hudson Yards
+Battery Park
+Wall Street
+Central Park West
+Kalisa Way | kah lee sah way
+Grand Central
+Penn Station
+Port Authority
+Fifth Avenue
+Seventh Avenue
+Amsterdam Avenue
+Riverside Drive
+FDR Drive | eff dee are drive
+Garden State Parkway
+New Jersey Turnpike
+Lincoln Tunnel
+Holland Tunnel
+George Washington Bridge
+Frankfurt
+Flensburger Strasse | flens burger strasse; flens boorger shtrasse
+Kaiserstrasse | kaiser strasse; kaiser shtrasse
+Mainzer Landstrasse | mine tser lant strasse
+Zeil | tsile
+Sachsenhausen | zaksen howzen
+Bockenheim | bocken hime
+Eschborn | esh born
+Bad Homburg | baht hom boorg
+Offenbach | offen bach
+Wiesbaden | vees baden
+Mainz | mines
+Darmstadt | darm shtat
+Hanau | hah now
+Ruesselsheim | roossels hime
+Strasse | shtrasse; strasser
+Allee | ah lay
+Platz | plats
+Hauptbahnhof | howpt bahn hof
+Messe Frankfurt | messeh frankfurt
+Westend
+Nordend | nord end
+Bornheim | born hime
+Hoechst | herkst
+Niederrad | nee der raht
+Gateway Gardens
+Kelsterbach | kelster bach
+Neu-Isenburg | noy eezen boorg
+Langen | lahng en
+Gmail | gee mail
+Outlook
+Hotmail | hot mail
+Yahoo
+iCloud | eye cloud
+Proton Mail
+web.de | web dot dee ee; web dot day
+GMX | gee em ex
+T-Online | tee online
+GroundWidgets | ground widgets
+groundwidgets.com | ground widgets dot com
+Apex Transportation
+Santacruz | santa cruz

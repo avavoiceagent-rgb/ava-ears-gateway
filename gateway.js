@@ -45,10 +45,19 @@ const DG_KEY = process.env.DEEPGRAM_API_KEY || '';
 const SM_KEY = process.env.SPEECHMATICS_API_KEY || '';
 const SWAP = process.env.SWAP_CHANNELS === '1';
 const KEYTERMS = (process.env.KEYTERMS || [
+  // production 25
   'Apex Transportation','GroundWidgets','Groundops','Santacruz','sedan','SUV',
   'Sprinter van','mini bus','motor coach','Ava','Kruti','Chudgar','Apurva','Patel',
   'Saluja','Sarabjit','Amar','Pant','JFK','LaGuardia','LGA','Newark','EWR',
-  'Teterboro','Westchester'
+  'Teterboro','Westchester',
+  // travel pack v1 (Aug 2026) — hotels, airlines, geo; keep total under
+  // Deepgram's 500-token keyterm budget (~syllables)
+  'Marriott','Marquis','Hilton','Hyatt','Westin','Sheraton','Ritz-Carlton',
+  'Waldorf Astoria','InterContinental','DoubleTree','Embassy Suites',
+  'Lufthansa','Air India','Emirates','Etihad','Qatar Airways','JetBlue',
+  'Frankfurt','Paramus','Hoboken','Secaucus','Weehawken','Hackensack',
+  'Times Square','Rockefeller','Javits','Hudson Yards','Kalisa',
+  'Flensburger','Strasse','Gmail'
 ].join(',')).split(',').map(s => s.trim()).filter(Boolean);
 
 if (!DG_KEY) { console.error('FATAL: DEEPGRAM_API_KEY not set'); process.exit(1); }
@@ -56,9 +65,16 @@ if (!DG_KEY) { console.error('FATAL: DEEPGRAM_API_KEY not set'); process.exit(1)
 let CORPUS = [];
 if (process.env.CORPUS_FILE) {
   try {
+    // Line format: "Content" or "Content | sounds1; sounds2" (sounds_like hints)
     CORPUS = fs.readFileSync(process.env.CORPUS_FILE, 'utf8')
-      .split(/\r?\n/).map(s => s.trim()).filter(Boolean).slice(0, 1000);
-    console.log(`corpus loaded: ${CORPUS.length} names for Speechmatics additional_vocab`);
+      .split(/\r?\n/).map(s => s.trim()).filter(s => s && !s.startsWith('#')).slice(0, 1000)
+      .map(line => {
+        const [content, sl] = line.split('|').map(x => x.trim());
+        return sl
+          ? { content, sounds_like: sl.split(';').map(x => x.trim()).filter(Boolean) }
+          : { content };
+      });
+    console.log(`corpus loaded: ${CORPUS.length} entries for Speechmatics additional_vocab`);
   } catch (e) { console.error('corpus file unreadable:', e.message); }
 }
 
@@ -133,7 +149,7 @@ wss.on('connection', (vapi) => {
         audio_format: { type: 'raw', encoding: 'pcm_s16le', sample_rate: sampleRate },
         transcription_config: {
           language: 'en', enable_partials: false, max_delay: 2,
-          additional_vocab: CORPUS.map(c => ({ content: c })),
+          additional_vocab: CORPUS,
         },
       }));
       log(`[${id}] speechmatics shadow open (${CORPUS.length}-name dictionary)`);
