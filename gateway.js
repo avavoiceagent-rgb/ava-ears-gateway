@@ -87,6 +87,56 @@ const WEBAPP_URL = process.env.WEBAPP_URL || '';
 const WEBAPP_TOKEN = process.env.WEBAPP_TOKEN || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
+// v4: promote the arbiter from shadow to ACTIVE. When ARBITER_ACTIVE (default on),
+// a suspect entity-like customer FINAL from Deepgram is held for up to HOLD_MS so
+// Speechmatics (deep dictionary) + the Gemini arbiter can correct an entity garble
+// (e.g. "Amar Pant" heard as "I'm not a bank") BEFORE Vapi's LLM ever sees it.
+// Conservative + fail-open: a correction is forwarded ONLY when the arbiter's answer
+// contains a corpus entity SM heard that DG missed; otherwise the original DG final
+// is forwarded unchanged. Rig-only (prod uses Vapi's built-in Deepgram, not this
+// gateway). Set ARBITER_ACTIVE=0 to revert to pure shadow (log-only).
+const ARBITER_ACTIVE = process.env.ARBITER_ACTIVE !== '0';
+const HOLD_MS = Number(process.env.ARBITER_HOLD_MS || 1200);
+const SM_MAX_DELAY = Number(process.env.SM_MAX_DELAY || 1);
+
+// Cheap phonetic key (Soundex-ish, no deps) for garble-tolerant entity matching.
+function phKey(w) {
+  w = String(w || '').toLowerCase().replace(/[^a-z]/g, '');
+  if (!w) return '';
+  const map = { b:'1',f:'1',p:'1',v:'1', c:'2',g:'2',j:'2',k:'2',q:'2',s:'2',x:'2',z:'2',
+                d:'3',t:'3', l:'4', m:'5',n:'5', r:'6' };
+  let out = w[0], prev = map[w[0]] || '';
+  for (let i = 1; i < w.length; i++) { const c = map[w[i]] || ''; if (c && c !== prev) out += c; prev = c; }
+  return (out + '000').slice(0, 4);
+}
+// Per-call phonetic index: phKey -> canonical entity token, from keyterms + corpus.
+function buildEntityIndex(terms, corpus) {
+  const byKey = new Map();
+  const add = (s) => String(s || '').split(/\s+/).forEach(tok => {
+    const t = tok.replace(/[^A-Za-z]/g, '');
+    if (t.length >= 3) { const k = phKey(t); if (k && !byKey.has(k)) byKey.set(k, t); }
+  });
+  terms.forEach(add);
+  corpus.forEach(c => add(c && c.content ? c.content : c));
+  return byKey;
+}
+// Common conversational words that never need entity arbitration — a final made up
+// only of these is forwarded instantly (keeps "yes"/"no"/"correct" snappy).
+const STOPWORDS = new Set(('a an and the to of for is it im i m yes yeah yep no nope not '
+  + 'ok okay sure right correct thanks thank you hi hello hey please me my your that this '
+  + 'was were are be do dont don t can could would will just at on in as so um uh').split(/\s+/));
+// Entity-like = a short answer (name/email/number) — the turns where garbles bite and a
+// brief hold is acceptable. Sentences (>5 words or ending in .!?) and pure conversational
+// fillers pass through with zero added latency.
+function isEntityLike(t) {
+  const s = String(t || '').trim(); if (!s) return false;
+  if (/@|\d/.test(s)) return true;                          // emails / numbers: always
+  const words = s.split(/\s+/);
+  if (words.length > 5 || /[.!?]$/.test(s)) return false;   // sentences pass through fast
+  const nonStop = words.filter(w => !STOPWORDS.has(w.toLowerCase().replace(/[^a-z]/g, '')));
+  return nonStop.length > 0;                                // hold only if a real token remains
+}
+
 // Pull the caller's phone number out of Vapi's start message (shape varies;
 // try the known paths, log the keys so the real shape is captured on call 1).
 function extractCallerNumber(m) {
@@ -157,6 +207,53 @@ wss.on('connection', (vapi) => {
   let lastFinal = { customer: '', assistant: '' };
   let callKeyterms = KEYTERMS.slice();   // per-call: base + injected caller terms
   let callCorpus = CORPUS.slice();       // per-call: base + injected caller vocab
+  let entityByKey = null;                // lazily-built phonetic entity index for this call
+  let pendingCust = null;                // { dgText, timer, done } — a held suspect customer final
+  let lastSM = { text: '', at: 0 };      // most recent Speechmatics transcript
+
+  function forwardToVapi(channel, text, type) {
+    if (!closed && vapi.readyState === WebSocket.OPEN) {
+      vapi.send(JSON.stringify({ type: 'transcriber-response', transcription: text, channel, transcriptType: type }));
+    }
+  }
+  // Hold an entity-like customer FINAL briefly; fail-open forwards the DG original.
+  function holdCustomerFinal(dgText) {
+    if (pendingCust && !pendingCust.done) resolveHold(pendingCust.dgText); // flush prior, keep order
+    const p = { dgText, done: false, timer: null };
+    pendingCust = p;
+    p.timer = setTimeout(() => { if (!p.done) resolveHold(dgText); }, HOLD_MS);
+  }
+  function resolveHold(fallbackText) {
+    if (!pendingCust || pendingCust.done) return;
+    pendingCust.done = true;
+    if (pendingCust.timer) clearTimeout(pendingCust.timer);
+    forwardToVapi('customer', fallbackText, 'final');
+  }
+  // On an SM transcript, correct the held DG final IFF SM carries a corpus entity DG
+  // missed AND the Gemini arbiter's answer contains that entity. Else leave it to the
+  // timer (DG original). Conservative: never substitutes on the arbiter's word alone.
+  async function tryArbitrate(smText) {
+    const p = pendingCust;
+    if (!p || p.done) return;
+    if (!entityByKey) entityByKey = buildEntityIndex(callKeyterms, callCorpus);
+    const dgTokens = new Set(p.dgText.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(Boolean));
+    let hit = null;
+    for (const raw of String(smText).split(/\s+/)) {
+      const w = raw.replace(/[^A-Za-z]/g, ''); if (w.length < 3) continue;
+      if (dgTokens.has(w.toLowerCase())) continue;
+      const canon = entityByKey.get(phKey(w));
+      if (canon) { hit = canon; break; }
+    }
+    if (!hit) return; // nothing corpus-backed to justify a correction
+    const verdict = await geminiArbiter(p.dgText, smText, callKeyterms);
+    if (p.done) return; // timer already forwarded the original
+    if (verdict && verdict.toLowerCase().includes(hit.toLowerCase())) {
+      p.done = true; if (p.timer) clearTimeout(p.timer);
+      log(`[${id}] *** ARBITER (ACTIVE) substituted: "${verdict}"  [DG:"${p.dgText}" SM:"${smText}" entity:${hit}]`);
+      forwardToVapi('customer', verdict, 'final');
+    }
+    // else: no confident correction — the hold timer forwards the DG original
+  }
 
   /* ---------- Deepgram Nova-3 leg (the production ears) ---------- */
   function openDeepgram() {
@@ -187,13 +284,12 @@ wss.on('connection', (vapi) => {
       if (type === 'final') {
         lastFinal[channel] = text;
         log(`[${id}] DG final (${channel}): ${text}`);
+        if (ARBITER_ACTIVE && SM_KEY && channel === 'customer' && isEntityLike(text)) {
+          holdCustomerFinal(text); // forwarded later — corrected or (fail-open) original
+          return;
+        }
       }
-      if (!closed && vapi.readyState === WebSocket.OPEN) {
-        vapi.send(JSON.stringify({
-          type: 'transcriber-response',
-          transcription: text, channel, transcriptType: type,
-        }));
-      }
+      forwardToVapi(channel, text, type);
     });
     dg.on('error', (e) => log(`[${id}] deepgram error:`, e.message));
     dg.on('close', (c) => { log(`[${id}] deepgram closed (${c})`); if (!closed) setTimeout(() => { if (!closed) openDeepgram(); }, 500); });
@@ -211,7 +307,7 @@ wss.on('connection', (vapi) => {
         message: 'StartRecognition',
         audio_format: { type: 'raw', encoding: 'pcm_s16le', sample_rate: sampleRate },
         transcription_config: {
-          language: 'en', enable_partials: false, max_delay: 2,
+          language: 'en', enable_partials: false, max_delay: SM_MAX_DELAY,
           additional_vocab: callCorpus,
         },
       }));
@@ -222,14 +318,16 @@ wss.on('connection', (vapi) => {
       if (m.message !== 'AddTranscript') return;
       const text = (m.metadata && m.metadata.transcript || '').trim();
       if (!text) return;
-      log(`[${id}] SM shadow (customer): ${text}`);
-      // Naive disagreement probe: token-level containment check vs last DG final.
+      lastSM = { text, at: Date.now() };
+      log(`[${id}] SM ${ARBITER_ACTIVE ? 'active' : 'shadow'} (customer): ${text}`);
+      // ACTIVE: if a suspect customer final is being held, arbitrate it now.
+      if (ARBITER_ACTIVE && pendingCust && !pendingCust.done) { tryArbitrate(text); return; }
+      // SHADOW (log-only) disagreement probe when not actively holding.
       const norm = (s) => s.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(Boolean);
       const a = new Set(norm(lastFinal.customer)); const b = norm(text);
       const uniques = b.filter(w => w.length > 3 && !a.has(w));
       if (uniques.length) {
         log(`[${id}] *** DISAGREEMENT candidates: ${uniques.join(' ')} (SM heard these, DG final did not)`);
-        // Shadow arbiter (feature #3) — log-only, never touches the live transcript.
         geminiArbiter(lastFinal.customer, text, callKeyterms).then(v => {
           if (v) log(`[${id}] *** ARBITER (shadow): "${v}"  [A:"${lastFinal.customer}" B:"${text}"]`);
         });
@@ -284,6 +382,7 @@ wss.on('connection', (vapi) => {
 
   vapi.on('close', () => {
     closed = true;
+    try { if (pendingCust && pendingCust.timer) clearTimeout(pendingCust.timer); } catch {}
     log(`[${id}] Vapi disconnected`);
     try { dg && dg.close(); } catch {}
     try { sm && sm.send(JSON.stringify({ message: 'EndOfStream', last_seq_no: 0 })); sm && sm.close(); } catch {}
