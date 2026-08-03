@@ -129,10 +129,13 @@ const STOPWORDS = new Set(('a an and the to of for is it im i m yes yeah yep no 
 // brief hold is acceptable. Sentences (>5 words or ending in .!?) and pure conversational
 // fillers pass through with zero added latency.
 function isEntityLike(t) {
-  const s = String(t || '').trim(); if (!s) return false;
+  let s = String(t || '').trim(); if (!s) return false;
   if (/@|\d/.test(s)) return true;                          // emails / numbers: always
+  // Deepgram smart_format punctuates almost every final ("Amar Pant."), so a lone
+  // trailing .!? must NOT be treated as a sentence — strip it before judging length.
+  s = s.replace(/[.!?]+$/, '').trim(); if (!s) return false;
   const words = s.split(/\s+/);
-  if (words.length > 5 || /[.!?]$/.test(s)) return false;   // sentences pass through fast
+  if (words.length > 5 || /[.!?]/.test(s)) return false;    // real sentences (internal stops / >5 words) pass fast
   const nonStop = words.filter(w => !STOPWORDS.has(w.toLowerCase().replace(/[^a-z]/g, '')));
   return nonStop.length > 0;                                // hold only if a real token remains
 }
